@@ -36,6 +36,8 @@ jobs:
         id: login-pf-aws-ecr
         uses: aws-actions/amazon-ecr-login@v1
 
+      - run: ls -R
+
       - name: Build and tag backend Docker image
         env:
           ECR_REGISTRY: ${{ steps.login-pf-aws-ecr.outputs.registry }}
