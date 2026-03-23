@@ -47,7 +47,7 @@ jobs:
             -t "$IMAGE_URI" \
             -f backend/Dockerfile \
             --build-arg BUILD_ENV=${{ env.ACTIVE }} \
-            ./backend
+            backend
 
       - name: Get ECR login token
         id: ecr-login-token
