@@ -21,6 +21,10 @@ jobs:
 
       - name: Checkout code
         uses: actions/checkout@v4
+        with:
+            repository: SeeChange-edu/${{ env.REPOSITORY }}
+            token: ${{ secrets.ACTION_TOKEN }}
+            ref: ${{ env.BRANCH }}
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
