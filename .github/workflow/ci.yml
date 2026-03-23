@@ -1,0 +1,161 @@
+name: Nexus AI Backend CI
+
+on:
+  release:
+    types: [published]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+    strategy:
+      fail-fast: false
+    steps:
+      - name: get tag info
+        uses: Seechange-edu/Parse-Action-Tag@main
+        with:
+          githubToken: ${{ secrets.ACTION_TOKEN }}
+          type: parse
+
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Setup AWS ECR Details (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          role-session-name: GitHubActions-ECR-Push
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - name: Login to AWS ECR
+        id: login-pf-aws-ecr
+        uses: aws-actions/amazon-ecr-login@v1
+
+      - name: Build and tag backend Docker image
+        env:
+          ECR_REGISTRY: ${{ steps.login-pf-aws-ecr.outputs.registry }}
+          ECR_REPOSITORY: ${{ vars.APP_ID }}
+        run: |
+          # Build directly with docker build and tag it immediately
+          IMAGE_URI="${ECR_REGISTRY}/${ECR_REPOSITORY}/${{ env.ACTIVE }}:${{ env.NAME }}"
+          docker build \
+            -t "$IMAGE_URI" \
+            -f backend/Dockerfile \
+            --build-arg BUILD_ENV=${{ env.ACTIVE }} \
+            ./backend
+
+      - name: Get ECR login token
+        id: ecr-login-token
+        run: |
+          ECR_TOKEN=$(aws ecr get-login-password --region ${{ vars.AWS_REGION }})
+          echo "token<<EOF" >> $GITHUB_OUTPUT
+          echo "$ECR_TOKEN" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+
+      - name: Push backend image
+        env:
+          ECR_TOKEN: ${{ steps.ecr-login-token.outputs.token }}
+          ECR_REGISTRY: ${{ steps.login-pf-aws-ecr.outputs.registry }}
+          ECR_REPOSITORY: ${{ vars.APP_ID }}
+        run: |
+          IMAGE_URI="${ECR_REGISTRY}/${ECR_REPOSITORY}/${{ env.ACTIVE }}:${{ env.NAME }}"
+          docker push "$IMAGE_URI"
+          # Remove local image after push to free space
+          docker rmi "$IMAGE_URI" || true
+
+      - name: Final cleanup
+        if: always()
+        run: |
+          # Clean up all unused Docker resources
+          docker system prune -af --volumes || true
+          # Remove build cache
+          docker builder prune -af || true
+
+      - name: SSH and deploy backend
+        uses: appleboy/ssh-action@v1.2.0
+        env:
+          IMAGE_URI: ${{ steps.login-pf-aws-ecr.outputs.registry }}/${{ vars.APP_ID }}/${{ env.ACTIVE }}:${{ env.NAME }}
+          ECR_TOKEN: ${{ steps.ecr-login-token.outputs.token }}
+          ECR_REGISTRY: ${{ steps.login-pf-aws-ecr.outputs.registry }}
+        with:
+          host: ${{ vars.DEV_REMOTE_HOST }}
+          username: ${{ vars.REMOTE_USER }}
+          key: ${{ secrets.REMOTE_SSH_KEY }}
+          envs: IMAGE_URI,ECR_TOKEN,ECR_REGISTRY
+          script: |
+            # Login to AWS ECR using temporary token from GitHub Actions
+            echo ${ECR_TOKEN} | docker login --username AWS --password-stdin ${ECR_REGISTRY}
+
+            # Free disk space before pull (avoid "no space left on device")
+            if [ "$(docker ps -a -q -f name=${{ env.NAME }})" ]; then
+              echo "Stopping and removing existing ${{ env.NAME }} container..."
+              docker stop ${{ env.NAME }} || true
+              docker rm -f ${{ env.NAME }} || true
+            fi
+            echo "Pruning unused Docker resources to free space..."
+            docker container prune -f || true
+            docker image prune -af || true
+            docker system prune -af --volumes || true
+            
+            # Pull latest backend image
+            docker pull $IMAGE_URI
+            
+            # Choose project directory
+            PROJECT_DIR="$HOME/nexus-ai-2"
+            
+            # Ensure backend directory exists
+            mkdir -p "$PROJECT_DIR/backend"
+            
+            echo "Using project directory: $PROJECT_DIR"
+
+            # Run backend container using pulled image
+            # The .env is already baked into the Docker image from backend/env/dev.env
+            # No --env-file override needed — image carries the correct config
+            echo "Starting backend container..."
+            docker run -d \
+              --name ${{ env.NAME }} \
+              -p ${{ env.OUT_PORT}}:${{ env.PORT }} \
+              -v /tmp:/tmp:rw \
+              -e PYTHONPATH=/app \
+              -e PYTHONUNBUFFERED=1 \
+              --restart unless-stopped \
+              $IMAGE_URI
+            
+            # Clean up unused images
+            docker image prune --force
+            docker container prune --force
+            
+# #  notify-teams:
+# #    if: always()
+# #    needs: [ build ]
+# #    runs-on: ubuntu-latest
+# #    steps:
+# #      - name: Send Teams Notification
+# #        env:
+# #          WEBHOOK: ${{ vars.TEAMS_WEBHOOK_URL }}
+# #          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+# #        run: |
+# #          curl -X POST -H "Content-Type: application/json" \
+# #          -d '{
+# #            "@type": "MessageCard",
+# #            "@context": "http://schema.org/extensions",
+# #            "themeColor": "FF0000",
+# #            "summary": "${{ needs.build.result == 'success' && '🎉 Build succeeded!' || '❌ Build failed!' }}",
+# #            "title": "${{ needs.build.result == 'success' && '🎉 Build succeeded!' || '❌ Build failed!' }}: ${{ github.workflow }}",
+# #            "sections": [{
+# #              "facts": [
+# #                { "name": "Repository", "value": "${{ github.repository }}" },
+# #                { "name": "Triggered by", "value": "${{ github.event_name }}" },
+# #                { "name": "Commit Message", "value": "${{ github.event.head_commit.message }}" },
+# #                { "name": "Author", "value": "@${{ github.actor }}" },
+# #                { "name": "Result", "value": "${{ needs.build.result }}" }
+# #              ],
+# #              "text": "[View Workflow Run](${{ env.RUN_URL }})"
+# #            }]
+# #          }' \
+# #          "$WEBHOOK"
