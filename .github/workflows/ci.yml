@@ -46,9 +46,10 @@ jobs:
         env:
           ECR_REGISTRY: ${{ steps.login-pf-aws-ecr.outputs.registry }}
           ECR_REPOSITORY: ${{ vars.APP_ID }}
+          IMAGE_TAG: ${{ env.BRANCH }}
         run: |
           # Build directly with docker build and tag it immediately
-          IMAGE_URI="${ECR_REGISTRY}/${ECR_REPOSITORY}/${{ env.ACTIVE }}:${{ env.NAME }}"
+          IMAGE_URI="${ECR_REGISTRY}/${ECR_REPOSITORY}/${{ env.ACTIVE }}:${IMAGE_TAG}"
           docker build \
             -t "$IMAGE_URI" \
             -f backend/Dockerfile \
@@ -68,8 +69,9 @@ jobs:
           ECR_TOKEN: ${{ steps.ecr-login-token.outputs.token }}
           ECR_REGISTRY: ${{ steps.login-pf-aws-ecr.outputs.registry }}
           ECR_REPOSITORY: ${{ vars.APP_ID }}
+          IMAGE_TAG: ${{ env.BRANCH }}
         run: |
-          IMAGE_URI="${ECR_REGISTRY}/${ECR_REPOSITORY}/${{ env.ACTIVE }}:${{ env.NAME }}"
+          IMAGE_URI="${ECR_REGISTRY}/${ECR_REPOSITORY}/${{ env.ACTIVE }}:${IMAGE_TAG}"
           docker push "$IMAGE_URI"
           # Remove local image after push to free space
           docker rmi "$IMAGE_URI" || true
