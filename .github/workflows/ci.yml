@@ -48,8 +48,8 @@ jobs:
           ECR_REPOSITORY: ${{ vars.APP_ID }}
           IMAGE_TAG: ${{ env.BRANCH }}
         run: |
-          # Build directly with docker build and tag it immediately
-          IMAGE_URI="${ECR_REGISTRY}/${ECR_REPOSITORY}/${{ env.ACTIVE }}:${IMAGE_TAG}"
+          IMAGE_URI="${ECR_REGISTRY}/${ECR_REPOSITORY}/${{ env.ACTIVE }}:backend${IMAGE_TAG}"
+          echo "IMAGE_URI=${IMAGE_URI}" >> $GITHUB_ENV
           docker build \
             -t "$IMAGE_URI" \
             -f backend/Dockerfile \
@@ -66,12 +66,8 @@ jobs:
 
       - name: Push backend image
         env:
-          ECR_TOKEN: ${{ steps.ecr-login-token.outputs.token }}
-          ECR_REGISTRY: ${{ steps.login-pf-aws-ecr.outputs.registry }}
-          ECR_REPOSITORY: ${{ vars.APP_ID }}
-          IMAGE_TAG: ${{ env.BRANCH }}
+          IMAGE_URI: ${{ env.IMAGE_URI }}
         run: |
-          IMAGE_URI="${ECR_REGISTRY}/${ECR_REPOSITORY}/${{ env.ACTIVE }}:${IMAGE_TAG}"
           docker push "$IMAGE_URI"
           # Remove local image after push to free space
           docker rmi "$IMAGE_URI" || true
@@ -87,7 +83,7 @@ jobs:
       - name: SSH and deploy backend
         uses: appleboy/ssh-action@v1.2.0
         env:
-          IMAGE_URI: ${{ steps.login-pf-aws-ecr.outputs.registry }}/${{ vars.APP_ID }}/${{ env.ACTIVE }}:${{ env.BRANCH }}
+          IMAGE_URI: ${{ env.IMAGE_URI }}
           ECR_TOKEN: ${{ steps.ecr-login-token.outputs.token }}
           ECR_REGISTRY: ${{ steps.login-pf-aws-ecr.outputs.registry }}
         with:
