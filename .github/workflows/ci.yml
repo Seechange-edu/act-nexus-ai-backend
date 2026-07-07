@@ -52,8 +52,7 @@ jobs:
           echo "IMAGE_URI=${IMAGE_URI}" >> $GITHUB_ENV
           docker build \
             -t "$IMAGE_URI" \
-            -f backend/Dockerfile \
-            --build-arg BUILD_ENV=${{ env.ACTIVE }} \
+            -f backend/Dockerfile.deploy \
             ./backend
 
       - name: Get ECR login token
@@ -108,25 +107,26 @@ jobs:
             
             # Pull latest backend image
             docker pull $IMAGE_URI
-            
+
             # Choose project directory
             PROJECT_DIR="$HOME/nexus-ai-2"
-            
+
             # Ensure backend directory exists
             mkdir -p "$PROJECT_DIR/backend"
-            
+
             echo "Using project directory: $PROJECT_DIR"
 
-            # Run backend container using pulled image
-            # The .env is already baked into the Docker image from backend/env/dev.env
-            # No --env-file override needed — image carries the correct config
+            # Run backend container using pulled image.
+            # The image bakes no real env; inject the pre-placed host env at runtime.
             echo "Starting backend container..."
             docker run -d \
               --name ${{ env.NAME }} \
+              --env-file ~/env.nexus-ai-backend/${{ env.ACTIVE }}.env \
               -p ${{ env.OUT_PORT}}:${{ env.PORT }} \
               -v /tmp:/tmp:rw \
               -e PYTHONPATH=/app \
               -e PYTHONUNBUFFERED=1 \
+              ${{ env.RUN_ARGS }} \
               --restart unless-stopped \
               $IMAGE_URI
             
