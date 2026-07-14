@@ -26,6 +26,11 @@ jobs:
             token: ${{ secrets.ACTION_TOKEN }}
             ref: ${{ env.BRANCH }}
 
+      # `install` defaults to false, so this does NOT take over `docker build` below --
+      # the build runs on the Engine's own builder and lands in the local image store,
+      # which is what makes the `docker push` work. Don't switch the build to
+      # `docker buildx build` without adding --load, and don't expect cache-from/-to
+      # flags on `docker build` to do anything.
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
@@ -40,21 +45,21 @@ jobs:
         id: login-pf-aws-ecr
         uses: aws-actions/amazon-ecr-login@v1
 
-      - run: ls -R
-
-      - name: Build and tag backend Docker image
+      - name: Build and push backend image
         env:
           ECR_REGISTRY: ${{ steps.login-pf-aws-ecr.outputs.registry }}
           ECR_REPOSITORY: ${{ vars.APP_ID }}
           IMAGE_TAG: ${{ env.BRANCH }}
         run: |
           IMAGE_URI="${ECR_REGISTRY}/${ECR_REPOSITORY}/${{ env.ACTIVE }}:backend${IMAGE_TAG}"
-          echo "IMAGE_URI=${IMAGE_URI}" >> $GITHUB_ENV
           docker build \
             -t "$IMAGE_URI" \
             -f backend/Dockerfile.deploy \
             ./backend
+          docker push "$IMAGE_URI"
+          echo "IMAGE_URI=${IMAGE_URI}" >> $GITHUB_ENV
 
+      # Token for the deploy host to pull from ECR -- unrelated to the push above.
       - name: Get ECR login token
         id: ecr-login-token
         run: |
@@ -62,22 +67,6 @@ jobs:
           echo "token<<EOF" >> $GITHUB_OUTPUT
           echo "$ECR_TOKEN" >> $GITHUB_OUTPUT
           echo "EOF" >> $GITHUB_OUTPUT
-
-      - name: Push backend image
-        env:
-          IMAGE_URI: ${{ env.IMAGE_URI }}
-        run: |
-          docker push "$IMAGE_URI"
-          # Remove local image after push to free space
-          docker rmi "$IMAGE_URI" || true
-
-      - name: Final cleanup
-        if: always()
-        run: |
-          # Clean up all unused Docker resources
-          docker system prune -af --volumes || true
-          # Remove build cache
-          docker builder prune -af || true
 
       - name: SSH and deploy backend
         uses: appleboy/ssh-action@v1.2.0
@@ -94,17 +83,13 @@ jobs:
             # Login to AWS ECR using temporary token from GitHub Actions
             echo ${ECR_TOKEN} | docker login --username AWS --password-stdin ${ECR_REGISTRY}
 
-            # Free disk space before pull (avoid "no space left on device")
+            # Make way for the new container
             if [ "$(docker ps -a -q -f name=${{ env.NAME }})" ]; then
               echo "Stopping and removing existing ${{ env.NAME }} container..."
               docker stop ${{ env.NAME }} || true
               docker rm -f ${{ env.NAME }} || true
             fi
-            echo "Pruning unused Docker resources to free space..."
-            docker container prune -f || true
-            docker image prune -af || true
-            docker system prune -af --volumes || true
-            
+
             # Pull latest backend image
             docker pull $IMAGE_URI
 
