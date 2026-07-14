@@ -113,6 +113,11 @@ jobs:
               -e PYTHONUNBUFFERED=1 \
               ${{ env.RUN_ARGS }} \
               --restart unless-stopped \
+              --log-driver=awslogs \
+              --log-opt awslogs-region=ap-east-1 \
+              --log-opt awslogs-group=/docker/${{ env.NAME }} \
+              --log-opt awslogs-stream=${{ env.ACTIVE }} \
+              --log-opt awslogs-create-group=true \
               $IMAGE_URI
             
             # Clean up unused images
