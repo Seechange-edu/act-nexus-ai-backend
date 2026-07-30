@@ -107,7 +107,10 @@ jobs:
           IMAGE_TAG: ${{ env.BRANCH }}
         run: |
           IMAGE_URI="${ECR_REGISTRY}/${ECR_REPOSITORY}/${{ env.ACTIVE }}:backend${IMAGE_TAG}"
+          # BUILD_ENV bakes APP_PROFILE into the image; the app then loads backend/env/<profile>.env
+          # from the source repo and fills {profile} in the SSM parameter paths.
           docker build \
+            --build-arg BUILD_ENV=${{ env.ACTIVE }} \
             -t "$IMAGE_URI" \
             -f backend/Dockerfile.deploy \
             ./backend
@@ -157,11 +160,13 @@ jobs:
             echo "Using project directory: $PROJECT_DIR"
 
             # Run backend container using pulled image.
-            # The image bakes no real env; inject the pre-placed host env at runtime.
+            # No --env-file: the image carries backend/env/${{ env.ACTIVE }}.env from the source repo
+            # and pulls the secrets from AWS SSM at startup, same as think-and-speak-backend. Config
+            # is edited in the source repo or in SSM — never in a file on this host, so a leftover
+            # ~/env.nexus-ai-backend file cannot affect a deploy.
             echo "Starting backend container..."
             docker run -d \
               --name ${{ env.NAME }} \
-              --env-file ~/env.nexus-ai-backend/${{ env.ACTIVE }}.env \
               -p ${{ env.OUT_PORT}}:${{ env.PORT }} \
               -v /tmp:/tmp:rw \
               -e PYTHONPATH=/app \
