@@ -140,6 +140,7 @@ jobs:
           script: |
             # Login to AWS ECR using temporary token from GitHub Actions
             echo ${ECR_TOKEN} | docker login --username AWS --password-stdin ${ECR_REGISTRY}
+            docker pull "$IMAGE_URI" || exit 1
 
             # Make way for the new container
             if [ "$(docker ps -a -q -f name=${{ env.NAME }})" ]; then
@@ -147,9 +148,6 @@ jobs:
               docker stop ${{ env.NAME }} || true
               docker rm -f ${{ env.NAME }} || true
             fi
-
-            # Pull latest backend image
-            docker pull $IMAGE_URI
 
             # Choose project directory
             PROJECT_DIR="$HOME/nexus-ai-2"
